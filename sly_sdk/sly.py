@@ -1,5 +1,6 @@
 import enum
 import tarfile
+from typing import NamedTuple, Optional
 from fastapi import FastAPI
 import numpy as np
 
@@ -45,6 +46,25 @@ class Field(str, enum.Enum):
     STATE = "state"
     DATA = "data"
     CONTEXT = "context"
+
+
+class FigureInfo(NamedTuple):
+    id: int
+    class_id: int
+    updated_at: str
+    created_at: str
+    entity_id: int
+    object_id: int
+    project_id: int
+    dataset_id: int
+    frame_index: int
+    geometry_type: str
+    geometry: dict
+    geometry_meta: dict
+    tags: list
+    meta: dict
+    area: str
+    priority: Optional[int] = None
 
 
 class _PatchableJson(dict):
@@ -105,7 +125,7 @@ class MainServer(metaclass=Singleton):
 
 
 # SDK code
-class WebPyApplication:
+class WebPyApplication(metaclass=Singleton):
     def __init__(self):
         self._run_f = None
         self._widgets_n = 0
@@ -136,6 +156,14 @@ class WebPyApplication:
         img_data = img_ctx.getImageData(0, 0, img_cvs.width, img_cvs.height).data
         img_arr = np.array(img_data, dtype=np.uint8).reshape((img_cvs.height, img_cvs.width, 4))
         return img_arr
+
+    def get_figures(self):
+        from js import console
+
+        figures = []
+        for object_id, js_figure in self._store.state.figures.allFigures.entries:
+            print(object_id)
+            console.log(js_figure)
 
     @property
     def state(self):
