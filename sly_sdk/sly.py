@@ -231,11 +231,11 @@ class WebPyApplication:
         from fastapi.routing import APIRoute
         from js import console
 
-        console.log(self._store)  # TODO: remove
-        console.log(self._slyApp)  # TODO: remove
-
         self.state
         self.data  # to init StateJson and DataJson
+
+        console.log(self._store)  # TODO: remove
+        console.log(self._slyApp)  # TODO: remove
 
         server = MainServer().get_server()
         handlers = {}
