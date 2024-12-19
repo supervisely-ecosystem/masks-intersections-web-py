@@ -1,0 +1,13 @@
+{
+  "type": "client_side_app",
+  "version": "2.0.0",
+  "name": "Masks intersections",
+  "description": "",
+  "categories": [
+    "images",
+    "visualization"
+  ],
+  "min_instance_version": "6.12.13",
+  "integrated_into": ["image_annotation_tool"],
+  "gui_folder_path": "app"
+}
