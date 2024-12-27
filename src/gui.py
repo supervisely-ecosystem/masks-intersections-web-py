@@ -1,3 +1,5 @@
+import json
+import numpy as np
 from supervisely.app.widgets import Container, Button
 from sly_sdk.sly import WebPyApplication
 
@@ -31,4 +33,12 @@ def on_button_click():
     print("Button clicked!")
     img = app.get_current_image()
     green_mask = extract_green(img)
-    app.get_figures()
+    figures = app.get_figures()
+    print([json.dumps(figure._asdict()) for figure in figures])
+    updated_figures = []
+    for figure in figures:
+        x, y = figure.geometry["origin"]
+        data = figure.geometry["data"]
+        data = np.logical_and(green_mask[x:x+data.shape[0], y:y+data.shape[1]], data)
+        updated_figures.append(figure.clone(geometry={"origin": (x, y), "data": data}))
+    app.update_figures(figures)
