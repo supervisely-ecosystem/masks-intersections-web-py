@@ -1,10 +1,9 @@
-import json
 import numpy as np
 from supervisely.app.widgets import Container, Button
 from sly_sdk.sly import WebPyApplication
 
 
-button = globals().get("button", Button("Click me!", widget_id="widget_3"))
+button = globals().get("button", Button("Extract green", widget_id="widget_3"))
 layout = globals().get("layout", Container(widgets=[button], widget_id="widget_4"))
 
 app = WebPyApplication()
@@ -28,17 +27,19 @@ def extract_green(image, smooth=False):
     return green_mask
 
 
+def extract_green_from_figure(img, figure):
+    x, y = figure.geometry["origin"]
+    mask = figure.geometry["data"]
+    green = extract_green(image=img[x:x+mask.shape[0], y:y+mask.shape[1]])
+    mask = np.where((green == 255) & (mask == 255), 255, 0)
+    return figure.clone(geometry={"origin": (x, y), "data": mask})
+
 @button.click
 def on_button_click():
     print("Button clicked!")
     img = app.get_current_image()
-    green_mask = extract_green(img)
-    figures = app.get_figures()
-    print([json.dumps(figure._asdict()) for figure in figures])
+    figures = app.get_current_view_figures()
     updated_figures = []
     for figure in figures:
-        x, y = figure.geometry["origin"]
-        data = figure.geometry["data"]
-        data = np.logical_and(green_mask[x:x+data.shape[0], y:y+data.shape[1]], data)
-        updated_figures.append(figure.clone(geometry={"origin": (x, y), "data": data}))
-    app.update_figures(figures)
+        updated_figures.append(extract_green_from_figure(img, figure))
+    app.update_figures(updated_figures)

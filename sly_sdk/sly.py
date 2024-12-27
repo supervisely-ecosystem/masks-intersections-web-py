@@ -34,11 +34,8 @@ def get_or_create_event_loop():
 
 
 def await_async(coro):
-    # loop = get_or_create_event_loop()
-    # print("running", coro)
     loop = asyncio.get_event_loop()
     res = loop.run_until_complete(coro)
-    # print("finished", coro, "result:", res)
     return res
 
 class Singleton(type):
@@ -113,14 +110,14 @@ def get_figure_data(js_figure):
     img_data = img_ctx.getImageData(0, 0, img_cvs.width, img_cvs.height).data
     img_data = np.array(img_data, dtype=np.uint8).reshape(img_cvs.height, img_cvs.width, 4)
     rgb = img_data[:, :, :3]
-    alpha = img_data[:,:,3]
+    alpha = img_data[:, :, 3]
     return rgb, alpha
 
 
 def put_img_to_figure(js_figure, img_data: np.ndarray):
-    from js import ImageData
+    from js import ImageData, console
     from pyodide.ffi import create_proxy
-    
+
     img_data = img_data.flatten().astype(np.uint8)
     pixels_proxy = create_proxy(img_data)
     pixels_buf = pixels_proxy.getBuffer("u8clamped")
@@ -229,8 +226,12 @@ class WebPyApplication(metaclass=Singleton):
     def get_current_image_id(self):
         return self._context.imageId
 
-    def get_figures(self):
+    def get_selected_figure(self):
+        js_figure = self._store.getters.as_object_map()
+
+    def get_current_view_figures(self):
         from pyodide.webloop import PyodideFuture
+        import js
 
         js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
         if isinstance(js_figures, PyodideFuture):
@@ -238,6 +239,9 @@ class WebPyApplication(metaclass=Singleton):
         
         figures: List[FigureInfo] = []
         for js_figure in js_figures:
+            if js_figure._geometryType != "bitmap":
+                print(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
+                continue
             rgb, alpha = get_figure_data(js_figure)
             offset = (js_figure._geometry._main.offset.x, js_figure._geometry._main.offset.y)
             figures.append(FigureInfo(
@@ -257,31 +261,33 @@ class WebPyApplication(metaclass=Singleton):
                 meta=js_to_py(js_figure.meta),
                 area=js_figure.area,
                 priority=js_figure.priority,
-                version=js_figure._main.version
+                version=js_figure.version
             ))
         return figures
 
     def update_figures(self, figures: List[FigureInfo]):
         from pyodide.webloop import PyodideFuture
+        from pyodide.ffi import to_js
+        import js
+
         js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
         if isinstance(js_figures, PyodideFuture):
             js_figures = await_async(js_figures)
 
         for js_figure in js_figures:
             for figure in figures:
-                if figure.id != js_figure.id:
-                    continue
-            self._store.dispatch('figures/figureGeometryBeforeUpdate', figure.id)
-            rgb, alpha = get_figure_data(js_figure)
-            img = np.dstack((rgb, figure.geometry["data"]))
-            put_img_to_figure(js_figure, img)
-            self._store.dispatch('figures/updateGeometryInFigure', {
-                "figureId": figure.id,
-                "data": {
-                    "version": figure.version + 1,
-                },
-            })
-            
+                if figure.id == js_figure.id:
+                    self._store.dispatch('figures/figureGeometryBeforeUpdate', figure.id)
+                    # rgb, alpha = get_figure_data(js_figure)
+                    img = np.stack([figure.geometry["data"]] * 4, axis=-1)
+                    put_img_to_figure(js_figure, img)
+                    self._store.dispatch('figures/updateGeometryInFigure', to_js({
+                        "figureId": figure.id,
+                        "commit": True,
+                        "data": {
+                            "version": figure.version + 1,
+                        },
+                    }, dict_converter=js.Object.fromEntries))
 
     @property
     def state(self):
@@ -379,9 +385,6 @@ class WebPyApplication(metaclass=Singleton):
 
         self.state
         self.data  # to init StateJson and DataJson
-
-        console.log(self._store)  # TODO: remove
-        console.log(self._slyApp)  # TODO: remove
 
         server = MainServer().get_server()
         handlers = {}
