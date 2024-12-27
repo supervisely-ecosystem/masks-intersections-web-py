@@ -1,5 +1,10 @@
+import asyncio
 import enum
+import io
+import json
 import tarfile
+from typing import List, NamedTuple, Optional
+import cv2
 from fastapi import FastAPI
 import numpy as np
 
@@ -28,6 +33,11 @@ def get_or_create_event_loop():
             return loop
 
 
+def await_async(coro):
+    loop = asyncio.get_event_loop()
+    res = loop.run_until_complete(coro)
+    return res
+
 class Singleton(type):
     _instances = {}
 
@@ -45,6 +55,96 @@ class Field(str, enum.Enum):
     STATE = "state"
     DATA = "data"
     CONTEXT = "context"
+
+
+class FigureInfo(NamedTuple):
+    id: int
+    class_id: int
+    updated_at: str
+    created_at: str
+    entity_id: int
+    object_id: int
+    project_id: int
+    dataset_id: int
+    frame_index: int
+    geometry_type: str
+    geometry: dict
+    geometry_meta: dict
+    tags: list
+    meta: dict
+    area: str
+    priority: Optional[int] = None
+    version: int = 0
+
+    def clone(self, **kwargs):
+        return self._replace(**kwargs)
+
+
+def base64_2_data(s: str) -> np.ndarray:
+    import base64
+    from PIL import Image
+    import zlib
+    try:
+        z = zlib.decompress(base64.b64decode(s))
+    except zlib.error:
+        # If the string is not compressed, we'll not use zlib.
+        img = Image.open(io.BytesIO(base64.b64decode(s)))
+        return np.array(img)
+    n = np.frombuffer(z, np.uint8)
+
+    imdecoded = cv2.imdecode(n, cv2.IMREAD_GRAYSCALE)  # pylint: disable=no-member
+    if (len(imdecoded.shape) == 3) and (imdecoded.shape[2] == 4):
+        mask = imdecoded[:, :, 3]  # pylint: disable=unsubscriptable-object
+    if (len(imdecoded.shape) == 3) and (imdecoded.shape[2] == 1):
+        mask = imdecoded[:, :, 0] # pylint: disable=unsubscriptable-object
+    elif len(imdecoded.shape) == 2:
+        mask = imdecoded
+    else:
+        raise RuntimeError("Wrong internal mask format.")
+    return mask
+
+
+def get_figure_data(js_figure):
+    img_cvs = js_figure._geometry._main.bitmap
+    img_ctx = img_cvs.getContext("2d")
+    img_data = img_ctx.getImageData(0, 0, img_cvs.width, img_cvs.height).data
+    img_data = np.array(img_data, dtype=np.uint8).reshape(img_cvs.height, img_cvs.width, 4)
+    rgb = img_data[:, :, :3]
+    alpha = img_data[:, :, 3]
+    return rgb, alpha
+
+
+def put_img_to_figure(js_figure, img_data: np.ndarray):
+    from js import ImageData, console
+    from pyodide.ffi import create_proxy
+
+    img_data = img_data.flatten().astype(np.uint8)
+    pixels_proxy = create_proxy(img_data)
+    pixels_buf = pixels_proxy.getBuffer("u8clamped")
+    img_cvs = js_figure._geometry._main.bitmap
+    new_img_data = ImageData.new(pixels_buf.data, img_cvs.width, img_cvs.height)
+    img_ctx = img_cvs.getContext("2d")
+    img_ctx.putImageData(new_img_data, 0, 0)
+    pixels_proxy.destroy()
+    pixels_buf.release()
+
+
+def py_to_js(obj):
+    from pyodide.ffi import to_js
+    from js import Object
+
+    if isinstance(obj, dict):
+        js_obj = Object()
+        for key, value in obj.items():
+            setattr(js_obj, key, py_to_js(value))
+        return js_obj
+    elif isinstance(obj, list):
+        return [py_to_js(item) for item in obj]
+    else:
+        return to_js(obj)
+
+def js_to_py(obj):
+    return obj.to_py()
 
 
 class _PatchableJson(dict):
@@ -67,20 +167,6 @@ class _PatchableJson(dict):
     def send_changes(self):
         if self._linked_obj is None:
             return
-
-        from pyodide.ffi import to_js
-        from js import Object
-
-        def py_to_js(obj):
-            if isinstance(obj, dict):
-                js_obj = Object()
-                for key, value in obj.items():
-                    setattr(js_obj, key, py_to_js(value))
-                return js_obj
-            elif isinstance(obj, list):
-                return [py_to_js(item) for item in obj]
-            else:
-                return to_js(obj)
 
         for key, value in self.items():
             setattr(self._linked_obj, key, py_to_js(value))
@@ -105,7 +191,7 @@ class MainServer(metaclass=Singleton):
 
 
 # SDK code
-class WebPyApplication:
+class WebPyApplication(metaclass=Singleton):
     def __init__(self):
         self._run_f = None
         self._widgets_n = 0
@@ -136,6 +222,72 @@ class WebPyApplication:
         img_data = img_ctx.getImageData(0, 0, img_cvs.width, img_cvs.height).data
         img_arr = np.array(img_data, dtype=np.uint8).reshape((img_cvs.height, img_cvs.width, 4))
         return img_arr
+
+    def get_current_image_id(self):
+        return self._context.imageId
+
+    def get_selected_figure(self):
+        js_figure = self._store.getters.as_object_map()
+
+    def get_current_view_figures(self):
+        from pyodide.webloop import PyodideFuture
+        import js
+
+        js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
+        if isinstance(js_figures, PyodideFuture):
+            js_figures = await_async(js_figures)
+        
+        figures: List[FigureInfo] = []
+        for js_figure in js_figures:
+            if js_figure._geometryType != "bitmap":
+                print(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
+                continue
+            rgb, alpha = get_figure_data(js_figure)
+            offset = (js_figure._geometry._main.offset.x, js_figure._geometry._main.offset.y)
+            figures.append(FigureInfo(
+                id=js_figure.id,
+                class_id=js_figure.classId,
+                updated_at=js_figure.updatedAt,
+                created_at= js_figure.createdAt,
+                entity_id=None,
+                object_id=js_figure.objectId,
+                project_id=None,
+                dataset_id=None,
+                frame_index=None,
+                geometry_type=js_figure._geometryType,
+                geometry={"data": alpha, "origin": offset},
+                geometry_meta=None,
+                tags=js_to_py(js_figure.tags),
+                meta=js_to_py(js_figure.meta),
+                area=js_figure.area,
+                priority=js_figure.priority,
+                version=js_figure.version
+            ))
+        return figures
+
+    def update_figures(self, figures: List[FigureInfo]):
+        from pyodide.webloop import PyodideFuture
+        from pyodide.ffi import to_js
+        import js
+
+        js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
+        if isinstance(js_figures, PyodideFuture):
+            js_figures = await_async(js_figures)
+
+        for js_figure in js_figures:
+            for figure in figures:
+                if figure.id == js_figure.id:
+                    self._store.dispatch('figures/figureGeometryBeforeUpdate', figure.id)
+                    # rgb, alpha = get_figure_data(js_figure)
+                    img = np.stack([figure.geometry["data"]] * 4, axis=-1)
+                    put_img_to_figure(js_figure, img)
+                    self._store.dispatch('figures/updateGeometryInFigure', to_js({
+                        "figureId": figure.id,
+                        "commit": True,
+                        "data": {
+                            "version": figure.version + 1,
+                        },
+                    }, dict_converter=js.Object.fromEntries))
 
     @property
     def state(self):
@@ -230,9 +382,6 @@ class WebPyApplication:
         import gui
         from fastapi.routing import APIRoute
         from js import console
-
-        console.log(self._store)  # TODO: remove
-        console.log(self._slyApp)  # TODO: remove
 
         self.state
         self.data  # to init StateJson and DataJson
