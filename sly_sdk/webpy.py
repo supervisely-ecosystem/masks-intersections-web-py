@@ -3,6 +3,8 @@ import enum
 import io
 import json
 import tarfile
+import time
+import traceback
 from typing import List, NamedTuple, Optional
 import cv2
 from fastapi import FastAPI
@@ -115,7 +117,7 @@ def get_figure_data(js_figure):
 
 
 def put_img_to_figure(js_figure, img_data: np.ndarray):
-    from js import ImageData, console
+    from js import ImageData
     from pyodide.ffi import create_proxy
 
     img_data = img_data.flatten().astype(np.uint8)
@@ -192,10 +194,15 @@ class MainServer(metaclass=Singleton):
 
 # SDK code
 class WebPyApplication(metaclass=Singleton):
-    def __init__(self):
+    class Event:
+        figure_geometry_changed = "figures/figureGeometryUpdated"
+
+    def __init__(self, layout):
+        self.layout = layout
         self._run_f = None
         self._widgets_n = 0
         self.is_inited = False
+        self.events = None
 
     def __init_state(self):
         from js import slyApp
@@ -213,7 +220,47 @@ class WebPyApplication(metaclass=Singleton):
 
         self.is_inited = True
 
+    def _figure_from_js(self, js_figure):
+        if js_figure._geometryType != "bitmap":
+            print(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
+            return None
+        rgb, alpha = get_figure_data(js_figure)
+        offset = (js_figure._geometry._main.offset.x, js_figure._geometry._main.offset.y)
+        import js
+        js.console.log(js_figure)
+        return FigureInfo(
+            id=js_figure.id,
+            class_id=js_figure.classId,
+            updated_at=js_figure.updatedAt,
+            created_at= js_figure.createdAt,
+            entity_id=None,
+            object_id=js_figure.objectId,
+            project_id=None,
+            dataset_id=None,
+            frame_index=None,
+            geometry_type=js_figure._geometryType,
+            geometry={"data": alpha, "origin": offset},
+            geometry_meta=None,
+            tags=js_to_py(js_figure.tags),
+            meta=js_to_py(js_figure.meta),
+            area=js_figure.area,
+            priority=js_figure.priority,
+            version=js_figure.version
+        )
+
     # Labeling tool data access
+    def get_server_address(self):
+        from js import window
+        server_address = f"{window.location.protocol}//{window.location.host}/"
+        return server_address
+
+    def get_api_token(self):
+        return self._context.apiToken
+
+    def get_team_id(self):
+        return self._context.teamId
+
+
     def get_current_image(self):
         cur_img = getattr(self._store.state.videos.all, str(self._context.imageId))
         img_src = cur_img.sources[0]
@@ -226,12 +273,29 @@ class WebPyApplication(metaclass=Singleton):
     def get_current_image_id(self):
         return self._context.imageId
 
+    def get_figures(self, ids = None):
+        js_figures = self._store.getters.as_object_map()["figures/figuresList"]
+        if ids is not None:
+            js_figures = [f for f in js_figures if f.id in ids]
+        return [self._figure_from_js(f) for f in js_figures]
+    
+    def get_figure_by_id(self, figure_id: int):
+        figures = self.get_figures(ids=[figure_id])
+        if len(figures) == 0:
+            return None
+        return figures[0]
+
     def get_selected_figure(self):
-        js_figure = self._store.getters.as_object_map()
+        from pyodide.webloop import PyodideFuture
+        js_figure = self._store.getters.as_object_map()["figures/currentFigure"]
+        if isinstance(js_figure, PyodideFuture):
+            js_figure = await_async(js_figure)
+        if js_figure is None:
+            return None
+        return self._figure_from_js(js_figure)
 
     def get_current_view_figures(self):
         from pyodide.webloop import PyodideFuture
-        import js
 
         js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
         if isinstance(js_figures, PyodideFuture):
@@ -242,27 +306,7 @@ class WebPyApplication(metaclass=Singleton):
             if js_figure._geometryType != "bitmap":
                 print(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
                 continue
-            rgb, alpha = get_figure_data(js_figure)
-            offset = (js_figure._geometry._main.offset.x, js_figure._geometry._main.offset.y)
-            figures.append(FigureInfo(
-                id=js_figure.id,
-                class_id=js_figure.classId,
-                updated_at=js_figure.updatedAt,
-                created_at= js_figure.createdAt,
-                entity_id=None,
-                object_id=js_figure.objectId,
-                project_id=None,
-                dataset_id=None,
-                frame_index=None,
-                geometry_type=js_figure._geometryType,
-                geometry={"data": alpha, "origin": offset},
-                geometry_meta=None,
-                tags=js_to_py(js_figure.tags),
-                meta=js_to_py(js_figure.meta),
-                area=js_figure.area,
-                priority=js_figure.priority,
-                version=js_figure.version
-            ))
+            figures.append(self._figure_from_js(js_figure))
         return figures
 
     def update_figures(self, figures: List[FigureInfo]):
@@ -270,9 +314,11 @@ class WebPyApplication(metaclass=Singleton):
         from pyodide.ffi import to_js
         import js
 
-        js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
+        js_figures = self._store.getters.as_object_map()["figures/figuresList"]
         if isinstance(js_figures, PyodideFuture):
             js_figures = await_async(js_figures)
+
+        updated = []
 
         for js_figure in js_figures:
             for figure in figures:
@@ -281,13 +327,17 @@ class WebPyApplication(metaclass=Singleton):
                     # rgb, alpha = get_figure_data(js_figure)
                     img = np.stack([figure.geometry["data"]] * 4, axis=-1)
                     put_img_to_figure(js_figure, img)
+                    new_version = figure.version + 1
                     self._store.dispatch('figures/updateGeometryInFigure', to_js({
                         "figureId": figure.id,
                         "commit": True,
                         "data": {
-                            "version": figure.version + 1,
+                            "version": new_version,
                         },
                     }, dict_converter=js.Object.fromEntries))
+                    updated.append(figure.clone(version=new_version))
+        
+        return updated
 
     @property
     def state(self):
@@ -303,37 +353,60 @@ class WebPyApplication(metaclass=Singleton):
         DataJson().link(self._data)
         return DataJson()
 
-    @classmethod
-    def render(cls, layout, src_dir="", app_dir="", requirements_path: str = None):
+    def render(self, main_script_path: str, src_dir: str, app_dir: str, requirements_path: str = None):
         import json
         import os
         from pathlib import Path
-        import shutil
         import supervisely as sly
         from supervisely.app.content import DataJson, StateJson
         from fastapi.staticfiles import StaticFiles
         from fastapi.routing import Mount
 
-        app = sly.Application(layout=layout)
-        reqs = None
-        if requirements_path is not None:
-            reqs = Path(requirements_path).read_text().splitlines()
-        index = app.render({"__webpy_script__": True, "pyodide_requirements": reqs})
-        # @change="post('/{{{widget.widget_id}}}/value_changed')" -> @change="runPythonScript('/{{{widget.widget_id}}}/value_changed')"
-        index = index.replace("post('/", "runPythonScript('/")
-
-        src_dir = Path(src_dir)
         app_dir = Path(app_dir)
+        # read requirements
+        reqs = Path("sly_sdk/requirements.txt").read_text().splitlines()
+        if requirements_path is not None:
+            reqs.extend(Path(requirements_path).read_text().splitlines())
+        # Temp
+        
+        # init events handlers
+        events = None
+        if self.events is not None:
+            events = list(self.events.keys())
+        context = {"__webpy_script__": "__webpy_script__.py", "pyodide_requirements": reqs, "events_subscribed": events}
+        
+        # render index.html        
+        app = sly.Application(layout=self.layout)
+        index = app.render(context)
+        index = index.replace("post('/", "runPythonScript('/")
         os.makedirs(app_dir, exist_ok=True)
         with open(app_dir / "index.html", "w") as f:
             f.write(index)
 
+        # save State and Data
         json.dump(StateJson(), open(app_dir / "state.json", "w"))
         json.dump(DataJson(), open(app_dir / "data.json", "w"))
 
-        shutil.copy(src_dir / "gui.py", app_dir / "gui.py")
-        shutil.copy(src_dir / "main.py", app_dir / "main.py")
+        # generate entrypoint for script
+        main_module = '.'.join(main_script_path.split('/'))
+        if main_module.endswith(".py"):
+            main_module = main_module[:-3]
+        with open(app_dir / "__webpy_script__.py", "w") as f:
+            f.write(f"""
+try:
+    import supervisely
+except ImportError:
+    import sys
 
+    import sly_sdk as supervisely
+
+    sys.modules["supervisely"] = supervisely
+
+from {main_module} import app
+
+app.run""")
+
+        # Save SDK
         with tarfile.open(app_dir / "sly_sdk.tar", "w") as tar:
             tar.add(
                 "sly_sdk",
@@ -345,6 +418,19 @@ class WebPyApplication(metaclass=Singleton):
                 ),
             )
 
+        # Copy src
+        with tarfile.open(app_dir / "src.tar", "w") as tar:
+            tar.add(
+                src_dir,
+                arcname=src_dir,
+                filter=lambda tarinfo: (
+                    None
+                    if "__pycache__" in tarinfo.name or tarinfo.name.endswith(".pyc")
+                    else tarinfo
+                ),
+            )
+
+        # Save static
         server = app.get_server()
         for route in server.routes:
             if route.path == "/sly":
@@ -360,15 +446,36 @@ class WebPyApplication(metaclass=Singleton):
                                         Path(root, file), app_dir / Path("sly/css", rel_path, file)
                                     )
 
+    def event(self, event):
+        def wrapper(f):
+            if self.events is None:
+                self.events = {}
+            self.events[event] = f
+            return f
+        return wrapper
+
     def _get_handler(self, *args, **kwargs):
         if len(args) != 1:
-            return None
-        if not isinstance(args[0], str):
-            return None
+            return None, None
+        arg = args[0]
         handlers = kwargs.get("widgets_handlers", {})
-        if args[0] in handlers:
-            return handlers[args[0]]
-        return None
+
+        if handlers is not None and isinstance(arg, str) and arg in handlers:
+            return handlers[arg], []
+
+        handlers = kwargs.get("event_handlers", {})
+        if handlers is not None:
+            try:
+                if isinstance(arg, str):
+                    arg = json.loads(arg)
+                event_type = arg["type"]
+                event_payload = arg["payload"]
+            except Exception as e:
+                pass
+            else:
+                if event_type in handlers:
+                    return handlers[event_type], [event_payload]
+        return None, None
 
     def _run_handler(self, f, *args, **kwargs):
         import inspect
@@ -379,25 +486,40 @@ class WebPyApplication(metaclass=Singleton):
         return f(*args, **kwargs)
 
     def run(self, *args, **kwargs):
-        import gui
-        from fastapi.routing import APIRoute
-        from js import console
+        t = time.perf_counter()
+        try:
+            from fastapi.routing import APIRoute
 
-        self.state
-        self.data  # to init StateJson and DataJson
+            self.state
+            self.data  # to init StateJson and DataJson
 
-        server = MainServer().get_server()
-        handlers = {}
-        for route in server.router.routes:
-            if isinstance(route, APIRoute):
-                handlers[route.path] = route.endpoint
 
-        handler = self._get_handler(*args, widgets_handlers=handlers, **kwargs)
-        if handler is not None:
-            return self._run_handler(handler)
-        if self._run_f is None:
-            print("Unknown command")
-        return self._run_f(*args, **kwargs)
+            # import js
+            # js.console.log(self._store.getters.as_object_map())
+
+            server = MainServer().get_server()
+            widget_handlers = {}
+            for route in server.router.routes:
+                if isinstance(route, APIRoute):
+                    widget_handlers[route.path] = route.endpoint
+            
+            handler, handler_args = self._get_handler(*args, widgets_handlers=widget_handlers, event_handlers=self.events, **kwargs)
+            if handler is not None:
+                print("Prepare time:", time.perf_counter() - t)
+                t = time.perf_counter()
+                result = self._run_handler(handler, *handler_args)
+                print("function_time:", time.perf_counter() - t)
+                return result
+            if self._run_f is None:
+                print("Unknown command")
+            print("Prepare time:", time.perf_counter() - t)
+            t = time.perf_counter()
+            result = self._run_f(*args, **kwargs)
+            print("function_time:", time.perf_counter() - t)
+            return result
+        except Exception as e:
+            print(f"Unexpected error in app.run(): {e}")
+            traceback.print_exc()
 
     def run_function(self, f):
         self._run_f = f
