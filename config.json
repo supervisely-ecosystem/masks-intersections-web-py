@@ -9,5 +9,7 @@
   ],
   "min_instance_version": "6.12.13",
   "integrated_into": ["image_annotation_tool"],
-  "gui_folder_path": "app"
+  "gui_folder_path": "app",
+  "main_script": "src/main.py",
+  "src_dir": "src"
 }
