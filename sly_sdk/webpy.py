@@ -1,11 +1,9 @@
 import asyncio
 import enum
-import io
 import json
 import tarfile
 import time
 from typing import List, NamedTuple, Optional
-import cv2
 from fastapi import FastAPI
 import numpy as np
 from sly_sdk.sly_logger import logger
@@ -39,6 +37,7 @@ def await_async(coro):
     loop = asyncio.get_event_loop()
     res = loop.run_until_complete(coro)
     return res
+
 
 class Singleton(type):
     _instances = {}
@@ -94,13 +93,13 @@ class FigureObj:
         "meta": "meta",
         "area": "area",
         "priority": "priority",
-        "version": "version"
+        "version": "version",
     }
 
     def __init__(self, js_obj):
         self._js_obj = js_obj
         self._id = None
-    
+
     @property
     def figure_info(self):
         return FigureInfo(
@@ -108,7 +107,7 @@ class FigureObj:
             object_id=self.object_id,
             class_id=self.class_id,
             updated_at=self.updated_at,
-            created_at= self.created_at,
+            created_at=self.created_at,
             entity_id=None,
             project_id=None,
             dataset_id=None,
@@ -120,9 +119,9 @@ class FigureObj:
             meta=self.meta,
             area=self.area,
             priority=self.priority,
-            version=self.version
+            version=self.version,
         )
-    
+
     def _get_property(self, name, default=object()):
         js_name = self.attr_name.get(name, name)
         if hasattr(self._js_obj, js_name):
@@ -140,15 +139,15 @@ class FigureObj:
         if self._id is None:
             self._id = self._get_property("id")
         return self._id
-    
+
     @property
     def object_id(self):
         return self._get_property("object_id", None)
-    
+
     @property
     def class_id(self):
         return self._get_property("class_id", None)
-    
+
     @property
     def updated_at(self):
         return self._get_property("updated_at", None)
@@ -156,7 +155,7 @@ class FigureObj:
     @property
     def created_at(self):
         return self._get_property("created_at", None)
-    
+
     @property
     def geometry_type(self):
         return self._get_property("geometry_type", None)
@@ -172,50 +171,26 @@ class FigureObj:
     @property
     def geometry_version(self):
         return self._js_obj._geometry._main.version
-    
+
     @property
     def tags(self):
         return js_to_py(self._get_property("tags", None))
-    
+
     @property
     def meta(self):
         return js_to_py(self._get_property("meta", None))
-    
+
     @property
     def area(self):
         return self._get_property("area", None)
-    
+
     @property
     def priority(self):
         return self._get_property("priority", None)
-    
+
     @property
     def version(self):
         return self._get_property("version", None)
-
-
-def base64_2_data(s: str) -> np.ndarray:
-    import base64
-    from PIL import Image
-    import zlib
-    try:
-        z = zlib.decompress(base64.b64decode(s))
-    except zlib.error:
-        # If the string is not compressed, we'll not use zlib.
-        img = Image.open(io.BytesIO(base64.b64decode(s)))
-        return np.array(img)
-    n = np.frombuffer(z, np.uint8)
-
-    imdecoded = cv2.imdecode(n, cv2.IMREAD_GRAYSCALE)  # pylint: disable=no-member
-    if (len(imdecoded.shape) == 3) and (imdecoded.shape[2] == 4):
-        mask = imdecoded[:, :, 3]  # pylint: disable=unsubscriptable-object
-    if (len(imdecoded.shape) == 3) and (imdecoded.shape[2] == 1):
-        mask = imdecoded[:, :, 0] # pylint: disable=unsubscriptable-object
-    elif len(imdecoded.shape) == 2:
-        mask = imdecoded
-    else:
-        raise RuntimeError("Wrong internal mask format.")
-    return mask
 
 
 def get_figure_data(js_figure):
@@ -256,6 +231,7 @@ def py_to_js(obj):
         return [py_to_js(item) for item in obj]
     else:
         return to_js(obj)
+
 
 def js_to_py(obj):
     if obj is None:
@@ -338,6 +314,7 @@ class WebPyApplication(metaclass=Singleton):
     # Labeling tool data access
     def get_server_address(self):
         from js import window
+
         server_address = f"{window.location.protocol}//{window.location.host}/"
         return server_address
 
@@ -346,7 +323,6 @@ class WebPyApplication(metaclass=Singleton):
 
     def get_team_id(self):
         return self._context.teamId
-
 
     def get_current_image(self):
         cur_img = getattr(self._store.state.videos.all, str(self._context.imageId))
@@ -360,16 +336,16 @@ class WebPyApplication(metaclass=Singleton):
     def get_current_image_id(self):
         return self._context.imageId
 
-    def _get_js_figures(self, ids = None):
+    def _get_js_figures(self, ids=None):
         js_figures = self._store.getters.as_object_map()["figures/figuresList"]
         if ids is not None:
             js_figures = [f for f in js_figures if f.id in ids]
         return js_figures
 
-    def get_figures(self, ids = None) -> List[FigureObj]:
+    def get_figures(self, ids=None) -> List[FigureObj]:
         js_figures = self._get_js_figures(ids)
         return [FigureObj(f) for f in js_figures]
-    
+
     def get_figure_by_id(self, figure_id: int):
         figures = self.get_figures(ids=[figure_id])
         if len(figures) == 0:
@@ -378,6 +354,7 @@ class WebPyApplication(metaclass=Singleton):
 
     def get_selected_figure(self) -> FigureObj:
         from pyodide.webloop import PyodideFuture
+
         js_figure = self._store.getters.as_object_map()["figures/currentFigure"]
         if isinstance(js_figure, PyodideFuture):
             js_figure = await_async(js_figure)
@@ -385,9 +362,8 @@ class WebPyApplication(metaclass=Singleton):
             return None
         return FigureObj(js_figure)
 
-
     def get_figure_geometry_version(self, figure_id):
-        js_figures = self._get_js_figures(ids = [figure_id])
+        js_figures = self._get_js_figures(ids=[figure_id])
         if len(js_figures) == 0:
             return None
         js_figure = js_figures[0]
@@ -399,11 +375,13 @@ class WebPyApplication(metaclass=Singleton):
         js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
         if isinstance(js_figures, PyodideFuture):
             js_figures = await_async(js_figures)
-        
+
         figures: List[FigureInfo] = []
         for js_figure in js_figures:
             if js_figure._geometryType != "bitmap":
-                logger.warning(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
+                logger.warning(
+                    f"Only bitmaps supported at the moment, skipping object #{js_figure.id}"
+                )
                 continue
             figures.append(FigureObj(js_figure))
         return figures
@@ -412,17 +390,23 @@ class WebPyApplication(metaclass=Singleton):
         import js
         from pyodide.ffi import to_js
 
-        self._store.dispatch('figures/figureGeometryBeforeUpdate', figure.id)
+        self._store.dispatch("figures/figureGeometryBeforeUpdate", figure.id)
         img = np.stack([geometry] * 4, axis=-1)
         put_img_to_figure(figure._js_obj, img)
         new_version = figure._js_obj.geometry._main.version + 1
-        self._store.dispatch('figures/updateGeometryInFigure', to_js({
-            "figureId": figure.id,
-            "commit": True,
-            "data": {
-                "version": new_version,
-            },
-        }, dict_converter=js.Object.fromEntries))
+        self._store.dispatch(
+            "figures/updateGeometryInFigure",
+            to_js(
+                {
+                    "figureId": figure.id,
+                    "commit": True,
+                    "data": {
+                        "version": new_version,
+                    },
+                },
+                dict_converter=js.Object.fromEntries,
+            ),
+        )
         return figure
 
     @property
@@ -439,7 +423,9 @@ class WebPyApplication(metaclass=Singleton):
         DataJson().link(self._data)
         return DataJson()
 
-    def render(self, main_script_path: str, src_dir: str, app_dir: str, requirements_path: str = None):
+    def render(
+        self, main_script_path: str, src_dir: str, app_dir: str, requirements_path: str = None
+    ):
         import json
         import os
         from pathlib import Path
@@ -454,14 +440,18 @@ class WebPyApplication(metaclass=Singleton):
         if requirements_path is not None:
             reqs.extend(Path(requirements_path).read_text().splitlines())
         # Temp
-        
+
         # init events handlers
         events = None
         if self.events is not None:
             events = list(self.events.keys())
-        context = {"__webpy_script__": "__webpy_script__.py", "pyodide_requirements": reqs, "events_subscribed": events}
-        
-        # render index.html        
+        context = {
+            "__webpy_script__": "__webpy_script__.py",
+            "pyodide_requirements": reqs,
+            "events_subscribed": events,
+        }
+
+        # render index.html
         app = sly.Application(layout=self.layout)
         index = app.render(context)
         index = index.replace("post('/", "runPythonScript('/")
@@ -474,11 +464,12 @@ class WebPyApplication(metaclass=Singleton):
         json.dump(DataJson(), open(app_dir / "data.json", "w"))
 
         # generate entrypoint for script
-        main_module = '.'.join(main_script_path.split('/'))
+        main_module = ".".join(main_script_path.split("/"))
         if main_module.endswith(".py"):
             main_module = main_module[:-3]
         with open(app_dir / "__webpy_script__.py", "w") as f:
-            f.write(f"""
+            f.write(
+                f"""
 try:
     import supervisely
 except ImportError:
@@ -490,7 +481,8 @@ except ImportError:
 
 from {main_module} import app
 
-app.run""")
+app.run"""
+            )
 
         # Save SDK
         with tarfile.open(app_dir / "sly_sdk.tar", "w") as tar:
@@ -538,6 +530,7 @@ app.run""")
                 self.events = {}
             self.events[event] = f
             return f
+
         return wrapper
 
     def _get_handler(self, *args, **kwargs):
@@ -587,8 +580,10 @@ app.run""")
             for route in server.router.routes:
                 if isinstance(route, APIRoute):
                     widget_handlers[route.path] = route.endpoint
-            
-            handler, handler_args = self._get_handler(*args, widgets_handlers=widget_handlers, event_handlers=self.events, **kwargs)
+
+            handler, handler_args = self._get_handler(
+                *args, widgets_handlers=widget_handlers, event_handlers=self.events, **kwargs
+            )
             if handler is not None:
                 logger.debug("Prepare time:", time.perf_counter() - t)
                 logger.info(f"handler called: {handler.__name__}")
