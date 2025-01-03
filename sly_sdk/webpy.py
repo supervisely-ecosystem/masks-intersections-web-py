@@ -4,11 +4,11 @@ import io
 import json
 import tarfile
 import time
-import traceback
 from typing import List, NamedTuple, Optional
 import cv2
 from fastapi import FastAPI
 import numpy as np
+from sly_sdk.sly_logger import logger
 
 
 def get_or_create_event_loop():
@@ -82,6 +82,118 @@ class FigureInfo(NamedTuple):
         return self._replace(**kwargs)
 
 
+class FigureObj:
+    attr_name = {
+        "id": "id",
+        "class_id": "classId",
+        "updated_at": "updatedAt",
+        "created_at": "createdAt",
+        "object_id": "objectId",
+        "geometry_type": "_geometryType",
+        "tags": "tags",
+        "meta": "meta",
+        "area": "area",
+        "priority": "priority",
+        "version": "version"
+    }
+
+    def __init__(self, js_obj):
+        self._js_obj = js_obj
+        self._id = None
+    
+    @property
+    def figure_info(self):
+        return FigureInfo(
+            id=self.id,
+            object_id=self.object_id,
+            class_id=self.class_id,
+            updated_at=self.updated_at,
+            created_at= self.created_at,
+            entity_id=None,
+            project_id=None,
+            dataset_id=None,
+            frame_index=None,
+            geometry_type=self.geometry_type,
+            geometry=self.geometry,
+            geometry_meta=None,
+            tags=self.tags,
+            meta=self.meta,
+            area=self.area,
+            priority=self.priority,
+            version=self.version
+        )
+    
+    def _get_property(self, name, default=object()):
+        js_name = self.attr_name.get(name, name)
+        if hasattr(self._js_obj, js_name):
+            return getattr(self._js_obj, js_name)
+        else:
+            if default is object():
+                raise KeyError(f"Attribue '{name}' is not found")
+            return default
+
+    def __getattr__(self, name):
+        return self._get_property(name)
+
+    @property
+    def id(self):
+        if self._id is None:
+            self._id = self._get_property("id")
+        return self._id
+    
+    @property
+    def object_id(self):
+        return self._get_property("object_id", None)
+    
+    @property
+    def class_id(self):
+        return self._get_property("class_id", None)
+    
+    @property
+    def updated_at(self):
+        return self._get_property("updated_at", None)
+
+    @property
+    def created_at(self):
+        return self._get_property("created_at", None)
+    
+    @property
+    def geometry_type(self):
+        return self._get_property("geometry_type", None)
+
+    @property
+    def geometry(self):
+        if self.geometry_type != "bitmap":
+            raise ValueError(f"Unsupported geometry type: {self.geometry_type}")
+        _, alpha = get_figure_data(self._js_obj)
+        offset = (self._js_obj._geometry._main.offset.x, self._js_obj._geometry._main.offset.y)
+        return {"data": alpha, "origin": offset}
+
+    @property
+    def geometry_version(self):
+        return self._js_obj._geometry._main.version
+    
+    @property
+    def tags(self):
+        return js_to_py(self._get_property("tags", None))
+    
+    @property
+    def meta(self):
+        return js_to_py(self._get_property("meta", None))
+    
+    @property
+    def area(self):
+        return self._get_property("area", None)
+    
+    @property
+    def priority(self):
+        return self._get_property("priority", None)
+    
+    @property
+    def version(self):
+        return self._get_property("version", None)
+
+
 def base64_2_data(s: str) -> np.ndarray:
     import base64
     from PIL import Image
@@ -146,6 +258,8 @@ def py_to_js(obj):
         return to_js(obj)
 
 def js_to_py(obj):
+    if obj is None:
+        return None
     return obj.to_py()
 
 
@@ -196,6 +310,7 @@ class MainServer(metaclass=Singleton):
 class WebPyApplication(metaclass=Singleton):
     class Event:
         figure_geometry_changed = "figures/figureGeometryUpdated"
+        figure_geometry_saved = "figures/commitFigureGeometryToServer"
 
     def __init__(self, layout):
         self.layout = layout
@@ -219,34 +334,6 @@ class WebPyApplication(metaclass=Singleton):
         DataJson().link(self._data)
 
         self.is_inited = True
-
-    def _figure_from_js(self, js_figure):
-        if js_figure._geometryType != "bitmap":
-            print(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
-            return None
-        rgb, alpha = get_figure_data(js_figure)
-        offset = (js_figure._geometry._main.offset.x, js_figure._geometry._main.offset.y)
-        import js
-        js.console.log(js_figure)
-        return FigureInfo(
-            id=js_figure.id,
-            class_id=js_figure.classId,
-            updated_at=js_figure.updatedAt,
-            created_at= js_figure.createdAt,
-            entity_id=None,
-            object_id=js_figure.objectId,
-            project_id=None,
-            dataset_id=None,
-            frame_index=None,
-            geometry_type=js_figure._geometryType,
-            geometry={"data": alpha, "origin": offset},
-            geometry_meta=None,
-            tags=js_to_py(js_figure.tags),
-            meta=js_to_py(js_figure.meta),
-            area=js_figure.area,
-            priority=js_figure.priority,
-            version=js_figure.version
-        )
 
     # Labeling tool data access
     def get_server_address(self):
@@ -273,11 +360,15 @@ class WebPyApplication(metaclass=Singleton):
     def get_current_image_id(self):
         return self._context.imageId
 
-    def get_figures(self, ids = None):
+    def _get_js_figures(self, ids = None):
         js_figures = self._store.getters.as_object_map()["figures/figuresList"]
         if ids is not None:
             js_figures = [f for f in js_figures if f.id in ids]
-        return [self._figure_from_js(f) for f in js_figures]
+        return js_figures
+
+    def get_figures(self, ids = None) -> List[FigureObj]:
+        js_figures = self._get_js_figures(ids)
+        return [FigureObj(f) for f in js_figures]
     
     def get_figure_by_id(self, figure_id: int):
         figures = self.get_figures(ids=[figure_id])
@@ -285,16 +376,24 @@ class WebPyApplication(metaclass=Singleton):
             return None
         return figures[0]
 
-    def get_selected_figure(self):
+    def get_selected_figure(self) -> FigureObj:
         from pyodide.webloop import PyodideFuture
         js_figure = self._store.getters.as_object_map()["figures/currentFigure"]
         if isinstance(js_figure, PyodideFuture):
             js_figure = await_async(js_figure)
         if js_figure is None:
             return None
-        return self._figure_from_js(js_figure)
+        return FigureObj(js_figure)
 
-    def get_current_view_figures(self):
+
+    def get_figure_geometry_version(self, figure_id):
+        js_figures = self._get_js_figures(ids = [figure_id])
+        if len(js_figures) == 0:
+            return None
+        js_figure = js_figures[0]
+        return js_figure.geometry._main.version
+
+    def get_current_view_figures(self) -> List[FigureObj]:
         from pyodide.webloop import PyodideFuture
 
         js_figures = self._store.getters.as_object_map()["figures/currentViewFigures"]
@@ -304,40 +403,27 @@ class WebPyApplication(metaclass=Singleton):
         figures: List[FigureInfo] = []
         for js_figure in js_figures:
             if js_figure._geometryType != "bitmap":
-                print(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
+                logger.warning(f"Only bitmaps supported at the moment, skipping object #{js_figure.id}")
                 continue
-            figures.append(self._figure_from_js(js_figure))
+            figures.append(FigureObj(js_figure))
         return figures
 
-    def update_figures(self, figures: List[FigureInfo]):
-        from pyodide.webloop import PyodideFuture
-        from pyodide.ffi import to_js
+    def update_figure_geometry(self, figure: FigureObj, geometry):
         import js
+        from pyodide.ffi import to_js
 
-        js_figures = self._store.getters.as_object_map()["figures/figuresList"]
-        if isinstance(js_figures, PyodideFuture):
-            js_figures = await_async(js_figures)
-
-        updated = []
-
-        for js_figure in js_figures:
-            for figure in figures:
-                if figure.id == js_figure.id:
-                    self._store.dispatch('figures/figureGeometryBeforeUpdate', figure.id)
-                    # rgb, alpha = get_figure_data(js_figure)
-                    img = np.stack([figure.geometry["data"]] * 4, axis=-1)
-                    put_img_to_figure(js_figure, img)
-                    new_version = figure.version + 1
-                    self._store.dispatch('figures/updateGeometryInFigure', to_js({
-                        "figureId": figure.id,
-                        "commit": True,
-                        "data": {
-                            "version": new_version,
-                        },
-                    }, dict_converter=js.Object.fromEntries))
-                    updated.append(figure.clone(version=new_version))
-        
-        return updated
+        self._store.dispatch('figures/figureGeometryBeforeUpdate', figure.id)
+        img = np.stack([geometry] * 4, axis=-1)
+        put_img_to_figure(figure._js_obj, img)
+        new_version = figure._js_obj.geometry._main.version + 1
+        self._store.dispatch('figures/updateGeometryInFigure', to_js({
+            "figureId": figure.id,
+            "commit": True,
+            "data": {
+                "version": new_version,
+            },
+        }, dict_converter=js.Object.fromEntries))
+        return figure
 
     @property
     def state(self):
@@ -493,7 +579,6 @@ app.run""")
             self.state
             self.data  # to init StateJson and DataJson
 
-
             # import js
             # js.console.log(self._store.getters.as_object_map())
 
@@ -505,21 +590,21 @@ app.run""")
             
             handler, handler_args = self._get_handler(*args, widgets_handlers=widget_handlers, event_handlers=self.events, **kwargs)
             if handler is not None:
-                print("Prepare time:", time.perf_counter() - t)
+                logger.debug("Prepare time:", time.perf_counter() - t)
+                logger.info(f"handler called: {handler.__name__}")
                 t = time.perf_counter()
                 result = self._run_handler(handler, *handler_args)
-                print("function_time:", time.perf_counter() - t)
+                logger.debug("function_time:", time.perf_counter() - t)
                 return result
             if self._run_f is None:
-                print("Unknown command")
-            print("Prepare time:", time.perf_counter() - t)
+                logger.warning("Unknown command")
+            logger.debug("Prepare time:", time.perf_counter() - t)
             t = time.perf_counter()
             result = self._run_f(*args, **kwargs)
-            print("function_time:", time.perf_counter() - t)
+            logger.debug("function_time:", time.perf_counter() - t)
             return result
         except Exception as e:
-            print(f"Unexpected error in app.run(): {e}")
-            traceback.print_exc()
+            logger.error(f"Unexpected error in app.run(): {e}", exc_info=True)
 
     def run_function(self, f):
         self._run_f = f

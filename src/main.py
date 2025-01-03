@@ -4,13 +4,14 @@ import cv2
 
 from supervisely.app.widgets import Container, Button
 from sly_sdk.webpy import WebPyApplication
+from sly_sdk.sly_logger import logger
 
 
 button = globals().get("button", Button("Extract green", widget_id="widget_3"))
 layout = globals().get("layout", Container(widgets=[button], widget_id="widget_4"))
 
 local_cache = {}
-figures_versions = {}
+last_geometry_version = {}
 
 
 # Main script must have object "app" of WebApplication class 
@@ -43,60 +44,53 @@ def extract_green(image, smooth=False):
     return green_mask
 
 def extract_green_from_figure(green, figure):
-    x, y = figure.geometry["origin"]
-    mask = figure.geometry["data"]
+    figure_geometry = figure.geometry
+    x, y = figure_geometry["origin"]
+    mask = figure_geometry["data"]
     green = green[y:y+mask.shape[0], x:x+mask.shape[1]]
     mask = np.where((green == 255) & (mask == 255), 255, 0)
-    return figure.clone(geometry={"origin": (x, y), "data": mask})
+    return mask
 
 
-@app.event(app.Event.figure_geometry_changed)
+@app.event(app.Event.figure_geometry_saved)
 def geometry_updated(event_payload):
-    print("geometry_updated")
-    print("event_payload", event_payload)
     figure_id = event_payload["figureId"]
     t = time.perf_counter()
     figure = app.get_figure_by_id(figure_id)
-    print("get figure time", time.perf_counter() - t)
+    logger.debug("get figure time: %.4f ms", (time.perf_counter() - t) * 1000)
     if figure is None:
         return
-    last_version = figures_versions.get(figure_id, None)
-    if last_version is not None and last_version >= figure.version:
+    current_geom_version = figure.geometry_version
+    last_geom_version = last_geometry_version.get(figure_id, None)
+    last_geometry_version[figure_id] = current_geom_version + 2
+    if last_geom_version is not None and last_geom_version >= current_geom_version:
         return
-    figures_versions[figure_id] = figure.version + 1
     t = time.perf_counter()
     img_id = app.get_current_image_id()
-    print("get image id time", time.perf_counter() - t)
+    logger.debug("get image id time: %.4f ms", (time.perf_counter() - t) * 1000)
     if img_id not in local_cache:
         t = time.perf_counter()
         green = download_green(img_id)
-        print("download mask time", time.perf_counter() - t)
+        logger.debug("download mask time: %.4f ms", (time.perf_counter() - t) * 1000)
         local_cache[img_id] = green
     else:
         green = local_cache[img_id]
     t = time.perf_counter()
-    figure = extract_green_from_figure(green, figure)
-    print("extract green from figure time", time.perf_counter() - t)
+    mask = extract_green_from_figure(green, figure)
+    logger.debug("extract green from figure time: %.4f ms", (time.perf_counter() - t) * 1000)
     t = time.perf_counter()
-    figure = app.update_figures([figure])[0]
-    print("update figure time", time.perf_counter() - t)
-    print("updated figure. version:", figure.version)
+    # figure = app.update_figures([figure])[0]
+    app.update_figure_geometry(figure, mask)
+    logger.debug("update figure time: %.4f ms", (time.perf_counter() - t) * 1000)
 
 
 @button.click
 def on_button_click():
-    print("Button clicked!")
+    logger.debug("Button clicked!")
     img_id = app.get_current_image_id()
     if img_id not in local_cache:
         green = download_green(img_id)
         local_cache[img_id] = green
-    else:
-        green = local_cache[img_id]
-    figure = app.get_selected_figure()
-    if figure is None:
-        return
-    figure = extract_green_from_figure(green, figure)
-    return app.update_figures([figure])
 
 @app.run_function
 def run_default(*args, **kwargs):
