@@ -288,7 +288,10 @@ class WebPyApplication(metaclass=Singleton):
         figure_geometry_changed = "figures/figureGeometryUpdated"
         figure_geometry_saved = "figures/commitFigureGeometryToServer"
 
-    def __init__(self, layout):
+    def __init__(self, layout=None):
+        if layout is None:
+            from sly_sdk.app.widgets import Text
+            layout = Text("", widget_id="__epmty_layout__")
         self.layout = layout
         self._run_f = None
         self._widgets_n = 0
@@ -460,6 +463,7 @@ class WebPyApplication(metaclass=Singleton):
             f.write(index)
 
         # save State and Data
+        StateJson()["app_initializing"] = True
         json.dump(StateJson(), open(app_dir / "state.json", "w"))
         json.dump(DataJson(), open(app_dir / "data.json", "w"))
 
@@ -569,7 +573,10 @@ app.run"""
         try:
             from fastapi.routing import APIRoute
 
-            self.state
+            state = self.state
+            if state.get("app_initializing", False) == True:
+                state["app_initializing"] = False
+                state.send_changes()
             self.data  # to init StateJson and DataJson
 
             # import js

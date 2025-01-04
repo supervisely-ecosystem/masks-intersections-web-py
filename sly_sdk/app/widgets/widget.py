@@ -204,11 +204,11 @@ class Widget(BaseWidget, Hidable, Disableable, Loading):
     def _register(self):
         # get singletons
         data = DataJson()
-        data.raise_for_key(self.widget_id)
+        # data.raise_for_key(self.widget_id) # TODO
         self.update_data()
 
         state = StateJson()
-        state.raise_for_key(self.widget_id)
+        # state.raise_for_key(self.widget_id) # TODO
         self.update_state(state=state)
 
         #

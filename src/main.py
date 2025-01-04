@@ -2,13 +2,12 @@ import time
 import numpy as np
 import cv2
 
-from supervisely.app.widgets import Container, Button
+from supervisely.app.widgets import Text
 from sly_sdk.webpy import WebPyApplication
 from sly_sdk.sly_logger import logger
 
 
-button = globals().get("button", Button("Extract green", widget_id="widget_3"))
-layout = globals().get("layout", Container(widgets=[button], widget_id="widget_4"))
+layout = globals().get("layout", Text("Layout", widget_id="layout"))
 
 local_cache = {}
 last_geometry_version = {}
@@ -85,18 +84,3 @@ def geometry_updated(event_payload):
     # figure = app.update_figures([figure])[0]
     app.update_figure_geometry(figure, mask)
     logger.debug("update figure time: %.4f ms", (time.perf_counter() - t) * 1000)
-
-
-@button.click
-def on_button_click():
-    logger.debug("Button clicked!")
-    img_id = app.get_current_image_id()
-    if img_id not in local_cache:
-        green = download_green(img_id)
-        local_cache[img_id] = green
-
-
-@app.run_function
-def run_default(*args, **kwargs):
-    print("args", [f"{i}. {arg}" for i, arg in enumerate(args, 1)])
-    print("kwargs", kwargs)
