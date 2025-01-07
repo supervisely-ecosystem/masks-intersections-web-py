@@ -27,6 +27,7 @@ def download_green(image_id):
     api.file.download(team_id, f"/green_mask/{image_id}.png", "/tmp/img.png")
     mask = cv2.imread("/tmp/img.png")
     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    mask = mask.astype(bool)
     return mask
 
 
@@ -41,16 +42,20 @@ def extract_green(image, smooth=False):
         kernel = np.ones((3, 3), np.uint8)
         green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
         green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel)
+    
+    green_mask = green_mask.astype(bool)
 
     return green_mask
 
 
 def extract_green_from_figure(green, figure):
+    t = time.perf_counter()
     figure_geometry = figure.geometry
+    logger.debug("get geometry from figure time: %.4f ms", (time.perf_counter() - t) * 1000)
     x, y = figure_geometry["origin"]
     mask = figure_geometry["data"]
     green = green[y : y + mask.shape[0], x : x + mask.shape[1]]
-    mask = np.where((green == 255) & (mask == 255), 255, 0)
+    mask = mask * green
     return mask
 
 
