@@ -2,3 +2,4 @@
 *.pyc
 app/
 test_serve.py
+prepare_data.py
