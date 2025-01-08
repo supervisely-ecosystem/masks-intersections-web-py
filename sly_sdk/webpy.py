@@ -194,10 +194,24 @@ class FigureObj:
 
 
 def get_figure_data(js_figure):
-    img_cvs = js_figure._geometry._main.bitmap
-    img_ctx = img_cvs.getContext("2d")
-    img_data = img_ctx.getImageData(0, 0, img_cvs.width, img_cvs.height).data
-    img_data = np.array(img_data, dtype=np.uint8).reshape(img_cvs.height, img_cvs.width, 4)
+    # img_cvs = js_figure._geometry._main.bitmap
+    # img_ctx = img_cvs.getContext("2d")
+    # t = time.perf_counter()
+    # img_data = img_ctx.getImageData(0, 0, img_cvs.width, img_cvs.height).data
+    # logger.info(f"getImageData time: {(time.perf_counter() - t) * 1000:.4f} ms")
+
+    t = time.perf_counter()
+    img_data_obj = js_figure._geometry._main.getPixels()
+    logger.info(f"getPixels time: {(time.perf_counter() - t) * 1000:.4f} ms")
+
+    t = time.perf_counter()
+    py_arr_data = img_data_obj.data.to_py()
+    logger.info(f"to_py time: {(time.perf_counter() - t) * 1000:.4f} ms")
+
+    t = time.perf_counter()
+    img_data = np.array(py_arr_data, dtype=np.uint8).reshape(img_data_obj.height, img_data_obj.width, 4)
+    logger.info(f"np.array time: {(time.perf_counter() - t) * 1000:.4f} ms")
+
     rgb = img_data[:, :, :3]
     alpha = img_data[:, :, 3]
     return rgb, alpha
@@ -207,15 +221,18 @@ def put_img_to_figure(js_figure, img_data: np.ndarray):
     from js import ImageData
     from pyodide.ffi import create_proxy
 
+    height, width = img_data.shape[:2]
     img_data = img_data.flatten().astype(np.uint8)
     pixels_proxy = create_proxy(img_data)
     pixels_buf = pixels_proxy.getBuffer("u8clamped")
-    img_cvs = js_figure._geometry._main.bitmap
-    new_img_data = ImageData.new(pixels_buf.data, img_cvs.width, img_cvs.height)
-    img_ctx = img_cvs.getContext("2d")
-    img_ctx.putImageData(new_img_data, 0, 0)
-    pixels_proxy.destroy()
-    pixels_buf.release()
+    new_img_data = ImageData.new(pixels_buf.data, width, height)
+
+    try:
+        js_figure._geometry._main.setImageData(new_img_data)
+    except Exception as e:
+        pixels_proxy.destroy()
+        pixels_buf.release()
+        raise e
 
 
 def py_to_js(obj):
@@ -395,7 +412,9 @@ class WebPyApplication(metaclass=Singleton):
 
         self._store.dispatch("figures/figureGeometryBeforeUpdate", figure.id)
         img = np.stack([geometry] * 4, axis=-1)
+        t = time.perf_counter()
         put_img_to_figure(figure._js_obj, img)
+        logger.info(f"put_img_to_figure time: {(time.perf_counter() - t) * 1000:.4f} ms")
         new_version = figure._js_obj.geometry._main.version + 1
         self._store.dispatch(
             "figures/updateGeometryInFigure",
