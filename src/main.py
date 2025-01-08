@@ -2,12 +2,15 @@ import time
 import numpy as np
 import cv2
 
-from supervisely.app.widgets import Text
+from supervisely.app.widgets import Select, Button, Container
 from sly_sdk.webpy import WebPyApplication
 from sly_sdk.sly_logger import logger
 
 
-layout = globals().get("layout", Text("Layout", widget_id="layout"))
+
+select = Select(items=[Select.Item("download", "Download"), Select.Item("extract", "Extract green")], widget_id="select_widget")
+button = Button("Extract Mask", widget_id="button_widget")
+layout = Container(widgets=[select, button], widget_id="layout")
 
 local_cache = {}
 last_geometry_version = {}
@@ -72,16 +75,7 @@ def geometry_updated(event_payload):
     last_geometry_version[figure_id] = current_geom_version + 2
     if last_geom_version is not None and last_geom_version >= current_geom_version:
         return
-    t = time.perf_counter()
-    img_id = app.get_current_image_id()
-    logger.debug("get image id time: %.4f ms", (time.perf_counter() - t) * 1000)
-    if img_id not in local_cache:
-        t = time.perf_counter()
-        green = download_green(img_id)
-        logger.debug("download mask time: %.4f ms", (time.perf_counter() - t) * 1000)
-        local_cache[img_id] = green
-    else:
-        green = local_cache[img_id]
+    green = get_mask()
     t = time.perf_counter()
     mask = extract_green_from_figure(green, figure)
     logger.debug("extract green from figure time: %.4f ms", (time.perf_counter() - t) * 1000)
@@ -89,3 +83,25 @@ def geometry_updated(event_payload):
     # figure = app.update_figures([figure])[0]
     app.update_figure_geometry(figure, mask)
     logger.debug("update figure time: %.4f ms", (time.perf_counter() - t) * 1000)
+
+
+def get_mask(force = False):
+    t = time.perf_counter()
+    img_id = app.get_current_image_id()
+    logger.debug("get image id time: %.4f ms", (time.perf_counter() - t) * 1000)
+    if force or img_id not in local_cache:
+        t = time.perf_counter()
+        if select.get_value() == "download":
+            green = download_green(img_id)
+        else:
+            img = app.get_current_image()
+            green = extract_green(img)
+        logger.debug("download mask time: %.4f ms", (time.perf_counter() - t) * 1000)
+        local_cache[img_id] = green
+    return local_cache[img_id]
+
+
+
+@button.click
+def save_mask():
+    get_mask(force=True)
