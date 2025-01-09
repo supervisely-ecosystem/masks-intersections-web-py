@@ -1,4 +1,9 @@
+<div align="center" markdown>
 # Masks intersection
+
+<img src="https://github.com/user-attachments/assets/d5e708a4-d09d-456d-b6f7-065718bf2d34"/>
+
+</div>
 
 This application allows you to modify each bitmap mask created in labeling tool by intersecting it with predefined mask.
 The mask should be uploaded to teamfiles by the following path `/green_mask/{image_id}.png` where `{image_id}` is the id of the image you are working with.
