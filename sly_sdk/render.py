@@ -19,7 +19,7 @@ def get_config():
     with open("config.json") as f:
         return json.load(f)
 
-if __name__ == "__main__":
+def render():
     config = get_config()
     src_dir = config["src_dir"]
     gui_dir = config["gui_folder_path"]
@@ -42,3 +42,8 @@ if __name__ == "__main__":
         app_dir=gui_dir,
         requirements_path=find_requirements(src_dir),
     )
+
+    return gui_dir
+
+if __name__ == "__main__":
+    render()

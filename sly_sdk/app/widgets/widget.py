@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List
 
 
-from sly_sdk.webpy import DataJson, StateJson, MainServer, Singleton
+from sly_sdk.webpy.app import DataJson, StateJson, MainServer, Singleton
 
 
 # def rand_str(length):

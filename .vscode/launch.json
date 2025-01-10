@@ -9,5 +9,36 @@
             "console": "integratedTerminal",
             "justMyCode": false
         },
+        {
+            "name": "Advanced Debug in Supervisely platform",
+            "type": "python",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "sly_sdk.webpy.debug_server:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000",
+                "--ws",
+                "websockets",
+                "--reload",
+                "--reload-dir",
+                "src", // config.json[src_dir]
+                "--reload-exclude", 
+                "app", // config.json[gui_folder_path]
+                "--reload-exclude",
+                "app/__webpy_script__.py"
+            ],
+            "jinja": true,
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${PYTHONPATH}",
+                "LOG_LEVEL": "DEBUG",
+                "ENV": "development",
+                "DEBUG_WITH_SLY_NET": "1",
+                "SLY_APP_DATA_DIR": "${workspaceFolder}/app_data"
+            }
+        }
     ]
 }

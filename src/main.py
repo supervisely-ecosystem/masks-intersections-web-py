@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 
 from supervisely.app.widgets import Select, Button, Container
-from sly_sdk.webpy import WebPyApplication
+from sly_sdk.webpy.app import WebPyApplication
 from sly_sdk.sly_logger import logger
 
 

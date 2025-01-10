@@ -6,7 +6,7 @@ except ImportError:
     from typing_extensions import Literal
 
 from sly_sdk.app.widgets.widget import Widget
-from sly_sdk.webpy import DataJson
+from sly_sdk.webpy.app import DataJson
 
 
 TEXT = "text"

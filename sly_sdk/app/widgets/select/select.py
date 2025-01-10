@@ -6,7 +6,7 @@ try:
 except ImportError:
     from typing_extensions import Literal
 
-from sly_sdk.webpy import StateJson, DataJson, MainServer
+from sly_sdk.webpy.app import StateJson, DataJson, MainServer
 from sly_sdk.app.widgets.widget import Widget, ConditionalWidget
 
 
