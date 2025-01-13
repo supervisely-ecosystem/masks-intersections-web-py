@@ -32,8 +32,12 @@ from sly_sdk.webpy.app import DataJson, StateJson, MainServer, Singleton
 
 
 class BaseWidget:
-    def __init__(self, widget_id: str):
-        super().__init__()
+    widgets_counter = 0
+
+    def __init__(self, widget_id: str = None):
+        BaseWidget.widgets_counter += 1
+        if widget_id is None:
+            widget_id = "widget_" + str(BaseWidget.widgets_counter)
         self.server = MainServer()
         self.widget_id = widget_id
 

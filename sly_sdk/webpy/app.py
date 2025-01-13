@@ -299,8 +299,38 @@ class MainServer(metaclass=Singleton):
 # SDK code
 class WebPyApplication(metaclass=Singleton):
     class Event:
-        figure_geometry_changed = "figures/figureGeometryUpdated"
-        figure_geometry_saved = "figures/commitFigureGeometryToServer"
+        endpoint = None
+
+        @staticmethod
+        def from_json(data):
+            type = data["type"]
+            payload = data["payload"]
+            for cls in WebPyApplication.Event.__subclasses__():
+                if cls.endpoint == type:
+                    return cls.from_json(payload)
+            raise ValueError(f"Unknown event type: {type}")
+
+        class FigureGeometryChanged:
+            endpoint = "figures/figureGeometryUpdated"
+
+            def __init__(self, figure_id):
+                self.figure_id = figure_id
+
+            @classmethod
+            def from_json(cls, data):
+                figure_id = data["figureId"]
+                return cls(figure_id)
+
+        class FigureGeometrySaved:
+            endpoint = "figures/figureGeometrySaved"
+
+            def __init__(self, figure_id):
+                self.figure_id = figure_id
+
+            @classmethod
+            def from_json(cls, data):
+                figure_id = data["figureId"]
+                return cls(figure_id)
 
     def __init__(self, layout=None):
         if layout is None:
@@ -546,11 +576,11 @@ app.run"""
                                         Path(root, file), app_dir / Path("sly/css", rel_path, file)
                                     )
 
-    def event(self, event):
+    def event(self, event: Event):
         def wrapper(f):
             if self.events is None:
                 self.events = {}
-            self.events[event] = f
+            self.events[event.endpoint] = f
             return f
 
         return wrapper
@@ -575,7 +605,11 @@ app.run"""
                 pass
             else:
                 if event_type in handlers:
-                    return handlers[event_type], [event_payload]
+                    return handlers[event_type], [
+                        WebPyApplication.Event.from_json(
+                            {"type": event_type, "payload": event_payload}
+                        )
+                    ]
         return None, None
 
     def _run_handler(self, f, *args, **kwargs):
@@ -610,18 +644,18 @@ app.run"""
                 *args, widgets_handlers=widget_handlers, event_handlers=self.events, **kwargs
             )
             if handler is not None:
-                logger.debug("Prepare time:", time.perf_counter() - t)
+                logger.debug("Prepare time: %.4f ms", time.perf_counter() - t)
                 logger.info(f"handler called: {handler.__name__}")
                 t = time.perf_counter()
                 result = self._run_handler(handler, *handler_args)
-                logger.debug("function_time:", time.perf_counter() - t)
+                logger.debug("function_time: %.4f ms", time.perf_counter() - t)
                 return result
             if self._run_f is None:
                 logger.warning("Unknown command")
-            logger.debug("Prepare time:", time.perf_counter() - t)
+            logger.debug("Prepare time: %.4f ms", time.perf_counter() - t)
             t = time.perf_counter()
             result = self._run_f(*args, **kwargs)
-            logger.debug("function_time:", time.perf_counter() - t)
+            logger.debug("function_time: %.4f ms", time.perf_counter() - t)
             return result
         except Exception as e:
             logger.error(f"Unexpected error in app.run(): {e}", exc_info=True)

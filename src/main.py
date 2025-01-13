@@ -7,10 +7,11 @@ from sly_sdk.webpy.app import WebPyApplication
 from sly_sdk.sly_logger import logger
 
 
-
-select = Select(items=[Select.Item("download", "Download"), Select.Item("extract", "Extract green")], widget_id="select_widget")
-button = Button("Extract Mask", widget_id="button_widget")
-layout = Container(widgets=[select, button], widget_id="layout")
+select = Select(
+    items=[Select.Item("download", "Download"), Select.Item("extract", "Extract green")],
+)
+button = Button("Extract Mask")
+layout = Container(widgets=[select, button])
 
 local_cache = {}
 last_geometry_version = {}
@@ -45,7 +46,7 @@ def extract_green(image, smooth=False):
         kernel = np.ones((3, 3), np.uint8)
         green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
         green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel)
-    
+
     green_mask = green_mask.astype(bool)
 
     return green_mask
@@ -62,9 +63,9 @@ def extract_green_from_figure(green, figure):
     return mask
 
 
-@app.event(app.Event.figure_geometry_saved)
-def geometry_updated(event_payload):
-    figure_id = event_payload["figureId"]
+@app.event(app.Event.FigureGeometrySaved)
+def geometry_updated(event: WebPyApplication.Event.FigureGeometrySaved):
+    figure_id = event.figure_id
     t = time.perf_counter()
     figure = app.get_figure_by_id(figure_id)
     logger.debug("get figure time: %.4f ms", (time.perf_counter() - t) * 1000)
@@ -85,7 +86,7 @@ def geometry_updated(event_payload):
     logger.debug("update figure time: %.4f ms", (time.perf_counter() - t) * 1000)
 
 
-def get_mask(force = False):
+def get_mask(force=False):
     t = time.perf_counter()
     img_id = app.get_current_image_id()
     logger.debug("get image id time: %.4f ms", (time.perf_counter() - t) * 1000)
@@ -99,7 +100,6 @@ def get_mask(force = False):
         logger.debug("download mask time: %.4f ms", (time.perf_counter() - t) * 1000)
         local_cache[img_id] = green
     return local_cache[img_id]
-
 
 
 @button.click
