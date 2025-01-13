@@ -8,10 +8,10 @@ from sly_sdk.sly_logger import logger
 
 
 select = Select(
-    items=[Select.Item("download", "Download"), Select.Item("extract", "Extract green")],
+    items=[Select.Item("download", "Download"), Select.Item("extract", "Extract green")], widget_id="select_widget"
 )
-button = Button("Extract Mask")
-layout = Container(widgets=[select, button])
+button = Button("Extract Mask", widget_id="select_button")
+layout = Container(widgets=[select, button], widget_id="select_layout")
 
 local_cache = {}
 last_geometry_version = {}

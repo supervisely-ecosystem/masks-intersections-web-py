@@ -170,9 +170,6 @@ class Loading:
 
 class Widget(BaseWidget, Hidable, Disableable, Loading):
     def __init__(self, widget_id: str = None):
-        # widget_id = self.__init_widget_id(widget_id)
-        if widget_id is None:
-            raise ValueError("widget_id must be provided for webpy runtime")
         super().__init__(widget_id=widget_id)
         Hidable.__init__(self)
         Disableable.__init__(self)

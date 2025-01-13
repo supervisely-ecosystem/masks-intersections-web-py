@@ -305,9 +305,9 @@ class WebPyApplication(metaclass=Singleton):
         def from_json(data):
             type = data["type"]
             payload = data["payload"]
-            for cls in WebPyApplication.Event.__subclasses__():
-                if cls.endpoint == type:
-                    return cls.from_json(payload)
+            for name, value in WebPyApplication.Event.__dict__.items():
+                if hasattr(value, "endpoint") and value.endpoint == type:
+                    return value.from_json(payload)
             raise ValueError(f"Unknown event type: {type}")
 
         class FigureGeometryChanged:
@@ -322,7 +322,7 @@ class WebPyApplication(metaclass=Singleton):
                 return cls(figure_id)
 
         class FigureGeometrySaved:
-            endpoint = "figures/figureGeometrySaved"
+            endpoint = "figures/commitFigureGeometryToServer"
 
             def __init__(self, figure_id):
                 self.figure_id = figure_id
@@ -654,6 +654,9 @@ app.run"""
                 logger.warning("Unknown command")
             logger.debug("Prepare time: %.4f ms", time.perf_counter() - t)
             t = time.perf_counter()
+            if self._run_f is None:
+                logger.error("main function is not set")
+                return
             result = self._run_f(*args, **kwargs)
             logger.debug("function_time: %.4f ms", time.perf_counter() - t)
             return result
