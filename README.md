@@ -20,7 +20,7 @@ If you want to fork the application and add your own logic, please consider the 
 
 Example:
 ```python
-    my_widget = globals().get("my_widget", Text("My Widget", widget_id="layout"))
+    my_widget = Text("My Widget", widget_id="layout")
 ```
 
 
@@ -65,7 +65,7 @@ Available events can be found in the `app.Event` class
 
 example:
 ```python
-@app.event(app.Event.figure_geometry_saved)
-def on_figure_geometry_saved(data):
-    print("Figure geometry saved:", data)
+@app.event(app.Event.FigureGeometrySaved)
+def on_figure_geometry_saved(event: WebPyApplication.Event.FigureGeometrySaved):
+    print("Figure geometry saved:", event.figure_id)
 ```
